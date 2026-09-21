@@ -529,7 +529,6 @@ export const NATIVE_RECOVERY_CAUSES = [
   "dependency_missing",
   "permission_denied",
   "external_service_unavailable",
-  "other",
 ] as const;
 export type NativeRecoveryCause = (typeof NATIVE_RECOVERY_CAUSES)[number];
 

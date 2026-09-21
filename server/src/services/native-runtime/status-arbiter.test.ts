@@ -124,6 +124,37 @@ describe("native status authority", () => {
     expect(decision.effects.some((effect) => effect.kind === "bind_reviewer")).toBe(false);
   });
 
+  it("keeps an unclassified recovery cause on the human review path", () => {
+    const decision = arbitrate({
+      assessment: infrastructureAttentionAssessment({
+        verificationAssessments: [
+          {
+            commandOrCheck: "native Runner host bridge",
+            claimStatus: "not_run",
+            outcome: "missing",
+            evidenceRef: null,
+            reasonCode: "unclassified_operational_failure",
+            reportedReasonCode: null,
+            detail: "The failure has no server-owned recovery classification.",
+          },
+        ],
+      }),
+      nativeRecoveryPolicy: canaryRecoveryPolicy(),
+      runtimeMode: "native",
+    });
+    expect(decision).toMatchObject({
+      statusAction: "in_review",
+      reasonCode: "actionable_attention_pending",
+    });
+    expect(decision.effects).toEqual([
+      expect.objectContaining({
+        kind: "bind_reviewer",
+        resolverPolicy: "human_only",
+      }),
+    ]);
+    expect(decision.effects.some((effect) => effect.kind === "enqueue_continuation")).toBe(false);
+  });
+
   it("preserves human-only routing for a real approval request", () => {
     const decision = arbitrate({
       assessment: infrastructureAttentionAssessment({
