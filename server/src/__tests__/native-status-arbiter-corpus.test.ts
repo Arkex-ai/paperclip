@@ -1,6 +1,7 @@
 import {
   dismissAutomaticCompletionReviews,
   dismissAuthorizedNativeInfrastructureRecoveryReviews,
+  decisionHasRetiredAutomaticReview,
 } from "../services/native-runtime/automatic-completion-reviews.js";
 import { nativeCompletionFeedback } from "../services/native-runtime/native-completion-feedback.js";
 import { randomUUID } from "node:crypto";
@@ -2155,6 +2156,34 @@ describe("P6-31 Section 18.13 executable status-authority corpus", () => {
     } }).where(eq(workAssessments.id, seeded.assessmentId));
     await db.update(statusDecisions).set({ reasonCode: "actionable_attention_pending" })
       .where(eq(statusDecisions.id, seeded.decision.id));
+    const [storedResult] = await db.select().from(nativeRunResults)
+      .where(eq(nativeRunResults.id, seeded.resultId!));
+    const resultEnvelope = storedResult!.resultJson as Record<string, unknown>;
+    const resultPayload = resultEnvelope.result as Record<string, unknown>;
+    await db.update(nativeRunResults).set({ resultJson: {
+      ...resultEnvelope,
+      result: {
+        ...resultPayload,
+        completionClaim: {
+          contractRevision: "corpus-v1",
+          objectiveSatisfied: false,
+          criteria: [],
+          remainingWork: [],
+        },
+        reportedWorkDisposition: "needs_review",
+        attentionRequests: [{
+          kind: "review",
+          ownerClass: "human",
+          summary: "Runner host is unavailable; retry the native canary.",
+        }],
+        verification: [{
+          commandOrCheck: "runner host probe",
+          status: "not_run",
+          reasonCode: "environment_unavailable",
+          detail: "The native Runner host did not answer.",
+        }],
+      },
+    } }).where(eq(nativeRunResults.id, seeded.resultId!));
 
     await dismissAuthorizedNativeInfrastructureRecoveryReviews(db, seeded.issueId);
 
@@ -2164,7 +2193,20 @@ describe("P6-31 Section 18.13 executable status-authority corpus", () => {
       status: "cancelled",
       result: { outcome: "withdrawn", reason: "native_infrastructure_recovery_authorized" },
     });
-    expect((await issueService(db).getById(seeded.issueId))!.status).toBe("in_review");
+    expect(await decisionHasRetiredAutomaticReview(db, seeded.decision)).toBe(true);
+    await reconcileNativeFinalizations(db, [seeded.runId]);
+    const [issue] = await db.select().from(issues).where(eq(issues.id, seeded.issueId));
+    const decisions = await db.select().from(statusDecisions)
+      .where(eq(statusDecisions.issueId, seeded.issueId));
+    expect(issue!.status).toBe("in_progress");
+    const recoveryDecision = decisions.find(
+      (entry) => entry.reasonCode === "native_infrastructure_recovery_authorized",
+    );
+    expect(recoveryDecision).toBeDefined();
+    expect(recoveryDecision?.decisionJson.effects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "record_recovery" }),
+      expect.objectContaining({ kind: "enqueue_continuation" }),
+    ]));
   }, 30_000);
 
   it("keeps genuine approval actionable in the finish response and in finalization", async () => {

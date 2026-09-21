@@ -20,6 +20,7 @@ import { issueThreadInteractionService } from "../issue-thread-interactions.js";
 import { logger } from "../../middleware/logger.js";
 import { classifyNativeInfrastructureRecovery } from "./native-infrastructure-recovery.js";
 import type { NativeEvidenceAssessment } from "./evidence-classifier.js";
+import type { NativeInfrastructureRecoveryClassification } from "./native-infrastructure-recovery.js";
 
 const withdrawalReason = "automatic_completion_review_removed";
 const automaticPrompt =
@@ -267,9 +268,6 @@ export async function dismissAuthorizedNativeInfrastructureRecoveryReviews(
     .select({
       interaction: issueThreadInteractions,
       decision: statusDecisions,
-      assessment: workAssessments,
-      issue: issues,
-      run: heartbeatRuns,
     })
     .from(issueThreadInteractions)
     .innerJoin(
@@ -337,23 +335,12 @@ export async function dismissAuthorizedNativeInfrastructureRecoveryReviews(
       return [];
     });
 
-  const authorized = candidates.flatMap((candidate) => {
-    const assessment = readNativeInfrastructureRecoveryAssessment(
-      candidate.assessment.assessmentJson,
-    );
-    if (!assessment) return [];
-    const recovery = classifyNativeInfrastructureRecovery({
-      executionPolicy: candidate.issue.executionPolicy,
-      runtimeMode: candidate.run.runtimeMode === "native" ? "native" : "legacy",
-      governanceGate: null,
-      assessment,
-      attempt: candidate.run.continuationAttempt,
-    });
-    return recovery.authorized ? [{ ...candidate, recovery }] : [];
-  });
-
-  for (const { interaction, decision, recovery } of authorized) {
+  for (const { interaction, decision } of candidates) {
     const publications: ActivityPublication[] = [];
+    let recovery: Extract<
+      NativeInfrastructureRecoveryClassification,
+      { authorized: true }
+    > | null = null;
     try {
       await db.transaction(async (tx) => {
         await tx
@@ -377,6 +364,43 @@ export async function dismissAuthorizedNativeInfrastructureRecoveryReviews(
           )
           .for("update");
         if (!issue) return;
+        const [run] = await tx
+          .select()
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.id, decision.runId),
+              eq(heartbeatRuns.companyId, decision.companyId),
+              eq(heartbeatRuns.nativeIssueId, issue.id),
+            ),
+          )
+          .for("update");
+        const [assessmentRow] = await tx
+          .select()
+          .from(workAssessments)
+          .where(
+            and(
+              eq(workAssessments.id, decision.assessmentId),
+              eq(workAssessments.companyId, decision.companyId),
+              eq(workAssessments.issueId, issue.id),
+              eq(workAssessments.runId, decision.runId),
+            ),
+          )
+          .for("update");
+        if (!run || !assessmentRow || run.runtimeMode !== "native") return;
+        const assessment = readNativeInfrastructureRecoveryAssessment(
+          assessmentRow.assessmentJson,
+        );
+        if (!assessment) return;
+        const classification = classifyNativeInfrastructureRecovery({
+          executionPolicy: issue.executionPolicy,
+          runtimeMode: "native",
+          governanceGate: null,
+          assessment,
+          attempt: run.continuationAttempt,
+        });
+        if (!classification.authorized) return;
+        recovery = classification;
         const now = new Date();
         const [retired] = await tx
           .update(issueThreadInteractions)
@@ -459,7 +483,8 @@ export async function decisionHasRetiredAutomaticReview(
         eq(issueThreadInteractions.companyId, decision.companyId),
         eq(issueThreadInteractions.issueId, decision.issueId),
         eq(issueThreadInteractions.status, "cancelled"),
-        sql`${issueThreadInteractions.result}->>'reason' = ${withdrawalReason}`,
+        sql`(${issueThreadInteractions.result}->>'reason' = ${withdrawalReason}
+          or ${issueThreadInteractions.result}->>'reason' = ${infrastructureRecoveryWithdrawalReason})`,
         sql`(${issueThreadInteractions.payload}->'target'->>'revisionId' = ${decision.id}::text
       or ${ids.length ? inArray(issueThreadInteractions.id, ids) : sql`false`})`,
       ),
