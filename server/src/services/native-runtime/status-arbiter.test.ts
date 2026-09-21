@@ -202,6 +202,26 @@ describe("native status authority", () => {
     ]);
   });
 
+  it("keeps accepted material on the human review path even with an operational note", () => {
+    const decision = arbitrate({
+      assessment: infrastructureAttentionAssessment({
+        acceptedEvidenceRefs: ["work_product:accepted"],
+      }),
+      nativeRecoveryPolicy: canaryRecoveryPolicy(),
+      runtimeMode: "native",
+    });
+    expect(decision).toMatchObject({
+      statusAction: "in_review",
+      reasonCode: "actionable_attention_pending",
+    });
+    expect(decision.effects).toEqual([
+      expect.objectContaining({
+        kind: "bind_reviewer",
+        resolverPolicy: "human_only",
+      }),
+    ]);
+  });
+
   it("stops at the explicit recovery budget without creating another wake", () => {
     const decision = arbitrate({
       assessment: infrastructureAttentionAssessment(),
