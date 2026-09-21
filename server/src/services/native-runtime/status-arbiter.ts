@@ -121,6 +121,8 @@ export function arbitrateNativeStatus(input: {
   /** Durable continuation count for the current native issue. */
   nativeRecoveryAttempt?: number | null;
   runtimeMode?: "native" | "legacy";
+  /** Review decisions own task state; a reviewer's finish report cannot override them. */
+  nativeReviewOutcome?: "resolved" | "pending" | "stale";
   agentId: string;
   priorIssueStatus: NativeAuthoritativeIssueStatus;
 }): NativeStatusDecision {
@@ -149,6 +151,22 @@ export function arbitrateNativeStatus(input: {
             "Repair and re-run workspace finalization for the persisted native result.",
           agentId: input.agentId,
         },
+      ],
+    };
+  }
+  if (input.nativeReviewOutcome) {
+    return {
+      policyVersion: NATIVE_STATUS_ARBITER_POLICY_VERSION,
+      statusAction: "preserve", toStatus: input.priorIssueStatus,
+      reasonCode: input.nativeReviewOutcome === "pending" ? "native_review_unresolved" : "native_review_action_finished",
+      unblockDescriptor: null,
+      effects: [
+        { kind: "release_checkout" },
+        ...(input.nativeReviewOutcome === "pending" ? [{
+          kind: "record_recovery" as const, cause: "native_review_unresolved",
+          nextAction: "The named reviewer must resolve the pending completion review or explain the concrete blocker. Do not restart the worker's assignment or create another review request.",
+          agentId: input.agentId,
+        }] : []),
       ],
     };
   }

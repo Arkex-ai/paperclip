@@ -868,6 +868,7 @@ export type {
   RoutineRevisionSnapshot,
   RoutineRevision,
   RoutineTrigger,
+  RoutineWebhookDelivery,
   RoutineRun,
   RoutineTriggerSecretMaterial,
   RoutineDetail,
