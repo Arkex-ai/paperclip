@@ -255,6 +255,10 @@ provider source cursor, monotonic projection revision, and observation time.
 is unique, so retries return the original accepted action. Provider source
 ordering fences duplicate and stale updates, and a cleared projection retains
 its revision/cursor tombstone so an older provider event cannot resurrect it.
+The server reconciles open actions at startup and on the execution-control
+interval while it remains healthy. Each periodic sweep is single-flight. It
+reuses the original request ID and skips an action while its wake run is queued
+or active, so a lost dispatch can be retried without a service restart.
 
 Issue `status_version` advances only when `status` changes. The JavaScript backup
 path includes user-defined functions and triggers so a restored database keeps

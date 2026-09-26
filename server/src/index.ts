@@ -1156,6 +1156,13 @@ async function startServerWithDatabaseTeardown(
   const executionControlSweepsInFlight = new Set<string>();
   const executionControlSweeps = [
     ["finalization", () => reconcileAbandonedExecutionControl(db)],
+    // The session-goal action outbox is durable across a process crash, but a
+    // healthy server must also repair a dispatch lost after the action commit.
+    ["session_goal_actions", () => heartbeat ? heartbeat.recoverPendingSessionGoalActions().then((result) => {
+      if (result.enqueued > 0 || result.invalid > 0) {
+        logger.warn(result, "periodic session-goal action outbox recovery reconciled pending controls");
+      }
+    }) : undefined],
     ["replacement", () => heartbeat ? reconcileSafeNativeReplacements(db, new Date(), { verifyStoppedSession: run => verifyStoppedNativeSessionForReplacement(db, run) }) : undefined],
     ["reconciliation_delivery", () => heartbeat ? deliverReconciledExecutions(db, heartbeat.wakeup) : undefined],
     ["status_delivery", () => deliverExecutionStatuses(db)],
